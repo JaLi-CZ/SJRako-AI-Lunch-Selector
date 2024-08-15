@@ -2,7 +2,6 @@
 # Uses selenium to scrape data and interact with the website
 # GitHub "https://github.com/JaLi-CZ/SJRako-AI-Lunch-Selector"
 
-import time
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Tuple
@@ -14,6 +13,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import json
+import re
 
 
 # Creates, configures and returns new selenium driver
@@ -57,9 +58,14 @@ class Date:
     def from_tuple(date: tuple) -> 'Date':
         if len(date) != 3:
             raise ValueError(f"Tuple length must equal 3 when creating a Date object, not {len(date)}!")
-
         year, month, day = date
         return Date(year, month, day)
+
+    # "2022-01-01" -> Date(2022, 1, 1)
+    @staticmethod
+    def from_iso_format(iso_format: str) -> 'Date':
+        year, month, day = iso_format.split("-")
+        return Date(int(year), int(month), int(day))
 
     # Creates Date object using today's date
     @staticmethod
@@ -94,11 +100,17 @@ class Date:
                 return True
         return False
 
+    def is_after(self, date: 'Date') -> bool:
+        return self.iso_format() > date.iso_format()
+
+    def is_before(self, date: 'Date') -> bool:
+        return self.iso_format() < date.iso_format()
+
     @staticmethod
     def __pad_with_zeros(desired_len: int, s: object) -> str:
         return f"{'0' * desired_len}{s}"[-desired_len:]
 
-    def format(self) -> str:
+    def iso_format(self) -> str:
         return f"{self.year}-{Date.__pad_with_zeros(2, self.month)}-{Date.__pad_with_zeros(2, self.day)}"
 
     def __add__(self, other):
@@ -117,6 +129,12 @@ class Date:
             return self.year == other.year and self.month == other.month and self.day == other.day
         return False
 
+    def __lt__(self, other):
+        return self.is_before(other)
+
+    def __gt__(self, other):
+        return self.is_after(other)
+
     def __hash__(self):
         return hash((self.year, self.month, self.day))
 
@@ -130,17 +148,17 @@ class Lunch:
 
     def __init__(self, date: Date, number: int, soup: str, main_dish: str, status: Status = Status.DISABLED):
         def format_dish(dish: str):
-            dish = dish.lower()
-
+            if dish is None:
+                return None
+            dish = dish.lower().replace(",", "")
             del_from = dish.find("oběd pro studenta")
             if del_from != -1:
                 dish = dish[:del_from]
 
-            dish = dish.strip().replace("  ", " ").replace("  ", " ").replace(" ,", ",").replace(";", "")
+            dish = dish.strip().replace("  ", " ").replace("  ", " ").replace(";", "")
             if dish.endswith(","):
                 dish = dish[:-1].strip()
-            dish = dish.replace(", ", ",").replace(",", ", ")
-            return dish.replace('"', "")
+            return dish.replace('"', '').replace("\n", "")
 
         self.date: Date = date
         self.number: int = number
@@ -150,6 +168,16 @@ class Lunch:
 
     def __str__(self):
         return f"Oběd č. {self.number} dne {self.date} > Polévka: „{self.soup}“ \t Hlavní chod: „{self.main_dish}“"
+
+    def __eq__(self, other):
+        if isinstance(other, Lunch):
+            return (
+                self.date == other.date and
+                self.number == other.number and
+                self.soup == other.soup and
+                self.main_dish == other.main_dish
+            )
+        return False
 
     # Removes all brackets, and it's content
     @staticmethod
@@ -172,13 +200,14 @@ class Lunch:
         return s.strip()
 
     # Extracts soup and main_dish name from the lunch and returns it as tuple: (soup, main_dish)
+    # You can specify the sep (separator) for separating the soup from the main_dish
     @staticmethod
-    def get_soup_and_main_dish(lunch: str) -> Optional[tuple[str, str]]:
+    def get_soup_and_main_dish(lunch: str, sep: str = ";") -> Optional[tuple[str, str]]:
         lunch = Lunch.__remove_brackets_from_lunch(lunch)
-        sep = lunch.find(";")
-        if sep == -1:
+        idx = lunch.find(sep)
+        if idx == -1:
             return None
-        soup, main_dish = lunch[:sep], lunch[sep+1:]
+        soup, main_dish = lunch[:idx], lunch[idx+len(sep):]
         if soup.strip() == "" or main_dish.strip() == "":
             return None
         return soup, main_dish
@@ -200,11 +229,9 @@ class LunchMenu(list):
             raise ValueError("All lunches must have the same date.")
 
         # Count lunches by status
-        ordered_lunch, ordered_count, enabled_count = None, 0, 0
+        ordered_lunch, ordered_count = None, 0
         for lunch in lunches:
-            if lunch.status == Lunch.Status.ENABLED:
-                enabled_count += 1
-            elif lunch.status == Lunch.Status.ORDERED:
+            if lunch.status == Lunch.Status.ORDERED:
                 ordered_count += 1
                 ordered_lunch = lunch
 
@@ -214,27 +241,51 @@ class LunchMenu(list):
 
         super().__init__(lunches)
         self.date: Date = first_date
-        self.change_enabled: bool = enabled_count > 0
         self.ordered_lunch: Lunch = ordered_lunch
 
         # Find and define shared variables
         # shared_dish: defined if all main_dishes ends with the same part
         # shared_soup: defined if all soups are the same (which they should)
         self.shared_dish: Optional[str] = None
-        self.shared_soup: Optional[str] = None
+        self.shared_soup: Optional[str] = self.__get_shared_soup()
 
-        # Check if all soups are the same
-        first_soup = None
-        shared_soup = True
-        for lunch in lunches:
-            if first_soup is None:
-                first_soup = lunch.soup
-            if lunch.soup != first_soup:
-                shared_soup = False
-                break
-        if shared_soup:
-            # All soups are the same
-            self.shared_soup = first_soup
+        # If there is no shared_soup, try to fix possible bug
+        if self.shared_soup is None:
+            lunch_with_longest_soup = None
+            for lunch in self:
+                if lunch_with_longest_soup is None or len(lunch.soup) > len(lunch_with_longest_soup.soup):
+                    lunch_with_longest_soup = lunch
+
+            starts_with_same = True
+            for lunch in self:
+                if not lunch_with_longest_soup.soup.startswith(lunch.soup):
+                    starts_with_same = False
+                    break
+
+            if starts_with_same:
+                if lunch_with_longest_soup is not None:
+                    shared_to_idx = 0
+                    stop = False
+                    for i in range(len(lunch_with_longest_soup.soup)):
+                        try:
+                            first_c = None
+                            for lunch in self:
+                                c = lunch.soup[i]
+                                if first_c is None:
+                                    first_c = c
+                                elif c != first_c:
+                                    stop = True
+                                    break
+                        except:
+                            stop = True
+                        if stop:
+                            break
+                        shared_to_idx += 1
+                    soup_and_main_dish = f"{lunch_with_longest_soup.soup}{lunch_with_longest_soup.main_dish}"
+                    lunch_with_longest_soup.soup = soup_and_main_dish[:shared_to_idx].strip()
+                    lunch_with_longest_soup.main_dish = soup_and_main_dish[shared_to_idx:].strip()
+
+                    self.shared_soup = self.__get_shared_soup()
 
         # Find shared endings of main_dish(es), delete them, and save them as shared_dish
         shared_words = []
@@ -272,6 +323,18 @@ class LunchMenu(list):
             if lunch.number == lunch_number:
                 return lunch
         return None
+
+    # Returns soup if all soups are shared, otherwise None
+    def __get_shared_soup(self) -> Optional[str]:
+        first_soup = None
+        shared_soup = True
+        for lunch in self:
+            if first_soup is None:
+                first_soup = lunch.soup
+            if lunch.soup != first_soup:
+                shared_soup = False
+                break
+        return first_soup if shared_soup else None
 
     def __str__(self):
         lunches_str = map(lambda lunch: f"\n -> {lunch.number}. {'' if self.shared_soup else f'Polévka: „{lunch.soup}“ \t '}"
@@ -348,7 +411,7 @@ class User:
     # Returns LunchMenu for specified Date
     def get_lunch_menu(self, date: Date) -> Optional[LunchMenu]:
         # Modify day param in the url
-        target_url = self.__url_set_param(self.driver.current_url, "day", date.format())
+        target_url = self.__url_set_param(self.driver.current_url, "day", date.iso_format())
 
         # Go to that url
         self.driver.get(target_url)
@@ -362,28 +425,45 @@ class User:
             lunch_info = lunch_item.find_element(By.CSS_SELECTOR, "[id^='menu-']").text
             lunch_order_button = lunch_item.find_element(By.CSS_SELECTOR, ".btn")
             soup_and_dish = Lunch.get_soup_and_main_dish(lunch_info)
-            if soup_and_dish is None:
-                continue
-            soup, main_dish = soup_and_dish
+            if soup_and_dish is not None:
+                soup, main_dish = soup_and_dish
 
-            if f"Oběd {lunch_number}" not in lunch_order_button.text:
-                return None
-                # raise Exception(f"Lunch numbers must be the same! '{
-                #     lunch_order_button.text.replace('\n', '')}' does not correspond with lunch number {lunch_number}!")
+                if f"Oběd {lunch_number}" not in lunch_order_button.text:
+                    return None
+                    # raise Exception(f"Lunch numbers must be the same! '{
+                    #     lunch_order_button.text.replace('\n', '')}' does not correspond with lunch number {lunch_number}!")
 
-            anchor = lunch_item.find_element(By.TAG_NAME, "a")
-            classes = anchor.get_attribute("class").split(" ")
-            if "ordered" in classes:
-                status = Lunch.Status.ORDERED
-            elif "enabled" in classes:
-                status = Lunch.Status.ENABLED
-            else:
-                status = Lunch.Status.DISABLED
+                anchor = lunch_item.find_element(By.TAG_NAME, "a")
+                classes = anchor.get_attribute("class").split(" ")
+                if "ordered" in classes:
+                    status = Lunch.Status.ORDERED
+                elif "enabled" in classes:
+                    status = Lunch.Status.ENABLED
+                else:
+                    status = Lunch.Status.DISABLED
 
-            lunches.append(Lunch(date, lunch_number, soup, main_dish, status=status))
+                lunches.append(Lunch(date, lunch_number, soup, main_dish, status=status))
             lunch_number += 1
 
         return None if len(lunches) == 0 else LunchMenu(lunches)
+
+    # Gets all existing lunch menus between specified Dates including
+    def get_all_lunch_menus_between(self, from_date: Date, to_date: Date) -> list[LunchMenu]:
+        # Switch from_date and to_date if chronologically incorrect
+        if from_date.is_after(to_date):
+            temp = from_date
+            from_date = to_date
+            to_date = temp
+
+        # Collect all the lunch_menus between from_date and to_date and append them to lunch_menus
+        lunch_menus = []
+        curr_date = from_date
+        while not curr_date.is_after(to_date):
+            lunch_menu = self.get_lunch_menu(curr_date)
+            if lunch_menu is not None:
+                lunch_menus.append(lunch_menu)
+            curr_date += 1
+        return lunch_menus
 
     __max_recursion_depth = 3
 
@@ -397,7 +477,7 @@ class User:
             return False
 
         # Modify day param in the url
-        target_url = self.__url_set_param(self.driver.current_url, "day", date.format())
+        target_url = self.__url_set_param(self.driver.current_url, "day", date.iso_format())
 
         # Go to that url
         self.driver.get(target_url)
@@ -519,11 +599,10 @@ class Canteen:
                 if int(lunch_number_str.split(" ")[-1]) != lunch_number:
                     raise Exception(f"Lunch numbers must be the same! '{lunch_number_str}' does not correspond with {lunch_number}!")
 
-                soup_and_dish = Lunch.get_soup_and_main_dish(lunch)
-                if soup_and_dish is None:
-                    continue
-                soup, main_dish = soup_and_dish
-                lunches.append(Lunch(date, lunch_number, soup, main_dish))
+                soup_and_dish = Lunch.get_soup_and_main_dish(lunch, sep=",")
+                if soup_and_dish is not None:
+                    soup, main_dish = soup_and_dish
+                    lunches.append(Lunch(date, lunch_number, soup, main_dish))
                 lunch_number += 1
 
             if len(lunches) != 0:
@@ -555,3 +634,55 @@ class Canteen:
             if menu.date.is_lunch_changeable():
                 dates.append(menu.date)
         return dates
+
+    # Returns the last lunch-changeable date
+    @staticmethod
+    def get_last_lunch_changeable_date():
+        return Canteen.get_lunch_changeable_dates()[-1]
+
+
+DEFAULT_JSON_LUNCH_MENUS_FILEPATH = "lunch-menus.json"
+# Saves a list of LunchMenus as a JSON file
+def save_lunch_menus(lunch_menus: list[LunchMenu], filepath: str = DEFAULT_JSON_LUNCH_MENUS_FILEPATH) -> None:
+    json_obj = {
+        "lunchMenus": []
+    }
+    for lunch_menu in lunch_menus:
+        lunch_menu_json = {
+            "date": lunch_menu.date.iso_format(),
+            "sharedSoup": lunch_menu.shared_soup,
+            "sharedDish": lunch_menu.shared_dish,
+            "lunches": []
+        }
+        if lunch_menu.shared_soup is None:
+            del lunch_menu_json["sharedSoup"]
+        if lunch_menu.shared_dish is None:
+            del lunch_menu_json["sharedDish"]
+        for lunch in lunch_menu:
+            lunch_json = {
+                "lunchNumber": lunch.number,
+                "soup": lunch.soup,
+                "mainDish": lunch.main_dish
+            }
+            if lunch_menu.shared_soup:
+                del lunch_json["soup"]
+            lunch_menu_json["lunches"].append(lunch_json)
+        json_obj["lunchMenus"].append(lunch_menu_json)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(json_obj, f, indent=2, ensure_ascii=False)
+        
+# Loads a list of lunch menus from a JSON file
+def load_lunch_menus(filepath: str = DEFAULT_JSON_LUNCH_MENUS_FILEPATH) -> list[LunchMenu]:
+    with open(filepath, "r", encoding="utf-8") as f:
+        json_obj = json.load(f)
+    lunch_menus = []
+    for lunch_menu_json in json_obj["lunchMenus"]:
+        date = Date.from_iso_format(lunch_menu_json["date"])
+        shared_soup, shared_dish = lunch_menu_json.get("sharedSoup"), lunch_menu_json.get("sharedDish")
+        lunches = []
+        for lunch_json in lunch_menu_json["lunches"]:
+            lunch_number, soup, main_dish = lunch_json["lunchNumber"], lunch_json.get("soup"), lunch_json["mainDish"]
+            lunches.append(Lunch(date, lunch_number, soup if soup else shared_soup, main_dish))
+        lunch_menus.append(LunchMenu(lunches))
+    return lunch_menus
