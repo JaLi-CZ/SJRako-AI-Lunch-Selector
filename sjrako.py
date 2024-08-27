@@ -150,14 +150,12 @@ class Lunch:
         def format_dish(dish: str):
             if dish is None:
                 return None
-            dish = dish.lower().replace(",", "")
+            dish = dish.lower()
             del_from = dish.find("oběd pro studenta")
             if del_from != -1:
                 dish = dish[:del_from]
-
-            dish = dish.strip().replace("  ", " ").replace("  ", " ").replace(";", "")
-            if dish.endswith(","):
-                dish = dish[:-1].strip()
+            dish = dish.replace(",", " ").replace("   ", " ")
+            dish = dish.strip().replace("   ", " ").replace("  ", " ").replace(";", "")
             return dish.replace('"', '').replace("\n", "")
 
         self.date: Date = date

@@ -1,55 +1,5 @@
 # .venv\Scripts\python.exe lunch_rating_tool.py
 
-# Before rating:
-# - Ask for source JSON file
-# - Ask for target csv file
-# - Which data do you want to collect?
-# - - T [taste]       (mandatory)
-# - - M [meatiness]   (optional)
-# - - S [sweetness]   (optional)
-# - - H [healthiness] (optional)
-# - Where to save progress file
-
-# When rating:
-# - After each change save the progress file safely - use TEMP
-# - Key controls:
-#   ← previous
-#   → next
-#   ↑ move up
-#   ↓ move down
-
-# Variables [y][x]:
-# stands for - sep="   " for those that exist, does not change later
-# Progress: progress/out_of[2][10:21] skipped[2][35:40] remains[2][54:59]
-# Finished: finished/out_of[3][10:21] percent[3][26:31] ETA[3][50:?]
-# T[7][5] M[7][9] S[7][13] H[7][17]  LUNCH_NAME[8:17][20:?]
-# 'LUNCH_NAME'[19][2:?]
-# Rate the...[20][2:?]
-# <USER_INPUT>[21][15:18]  WORD_RATING+SMILE[21][24:?]
-
-# - - - - Lunch-rating tool - - - Create your own dataset - - - -
-# T = taste   M = meatiness   S = sweetness   H = healthiness
-# Progress: XXXXX/XXXXX  |  Skipped: XXXXX  |  Remains: XXXXX
-# Finished: XXXXX/XXXXX  |  XXXXX%          |  ETA: 2d 5h 41m 13s
-#
-# Best matches [TOP 10] > Press Enter to use the same rating
-# >>> SKIP this one
-#     [T] [M] [S] [H]
-# 1.  XXX XXX XXX XXX LUNCH_NAME
-# 2.  XXX XXX XXX XXX LUNCH_NAME
-# 3.  XXX XXX XXX XXX LUNCH_NAME
-# 4.  XXX XXX XXX XXX LUNCH_NAME
-# 5.  XXX XXX XXX XXX LUNCH_NAME
-# 6.  XXX XXX XXX XXX LUNCH_NAME
-# 7.  XXX XXX XXX XXX LUNCH_NAME
-# 8.  XXX XXX XXX XXX LUNCH_NAME
-# 9.  XXX XXX XXX XXX LUNCH_NAME
-# 10. XXX XXX XXX XXX LUNCH_NAME
-#
-# > 'LUNCH_NAME'
-# > Rate the [T/M/S/H FULL_NAME] of this lunch from 0 to 100
-# $ Your rating: <USER_INPUT>  =>  DISGUSTING :((
-
 import curses
 import csv
 import urllib.parse
@@ -303,8 +253,13 @@ class TerminalDisplay:
 
 
 # Compares two strings similarity, returns float [0 - 1]
-def similarity(s1: str, s2: str) -> float:
-    return SequenceMatcher(None, s1, s2).ratio()
+def similarity(s1: str, s2: str, prioritize_first_two_words: bool = False) -> float:
+    sim = SequenceMatcher(None, s1, s2).ratio()
+    if prioritize_first_two_words and s1.count(" ") >= 1 and s2.count(" ") >= 1:
+        s1_first_two, s2_first_two = " ".join(s1.split(" ")[:2]), " ".join(s2.split(" ")[:2])
+        sim2 = SequenceMatcher(None, s1_first_two, s2_first_two).ratio()
+        return (sim + sim2 ** 3) / 2
+    return sim
 
 # Scans all filenames in the current folder and returns the most 'similar'
 # 'similarity' prefers full filename > identical file extension > highest similarity()
@@ -535,7 +490,6 @@ for lunch_name in dataset_lunches.keys():
     lunches_set.discard(lunch_name)
 
 lunches = list(lunches_set)
-
 progress, skipped, remains, finished, out_of = len(dataset_lunches), 0, len(lunches), len(dataset_lunches), len(dataset_lunches) + len(lunches)
 
 lines = [
@@ -576,7 +530,7 @@ eta_days, eta_hours, eta_minutes, eta_seconds = 0, 0, 0, 0
 while len(lunches) > 0:
     start_seconds = time.time()
     curr_lunch_name = lunches.pop()
-    top_matches = sorted(dataset_lunches.items(), key=lambda pair: -similarity(curr_lunch_name, pair[0]))[:10]
+    top_matches = sorted(dataset_lunches.items(), key=lambda pair: -similarity(curr_lunch_name, pair[0], True))[:10]
 
     display.set_all(progress, out_of, skipped, remains, finished, eta_days, eta_hours, eta_minutes, eta_seconds, top_matches, curr_lunch_name)
     display.reset_cursor_y()
