@@ -141,12 +141,7 @@ class Date:
 
 # Represents a Lunch object
 class Lunch:
-    class Status(Enum):
-        DISABLED = 0
-        ENABLED = 1
-        ORDERED = 2
-
-    def __init__(self, date: Date, number: int, soup: str, main_dish: str, status: Status = Status.DISABLED):
+    def __init__(self, date: Date, number: int, soup: str, main_dish: str, can_be_changed: bool = False, is_ordered: bool = False):
         def format_dish(dish: str):
             if dish is None:
                 return None
@@ -162,7 +157,8 @@ class Lunch:
         self.number: int = number
         self.soup: str = format_dish(soup)
         self.main_dish: str = format_dish(main_dish)
-        self.status: Lunch.Status = status
+        self.can_be_changed: bool = can_be_changed
+        self.is_ordered: bool = is_ordered
 
     def __str__(self):
         return f"Oběd č. {self.number} dne {self.date} > Polévka: „{self.soup}“ \t Hlavní chod: „{self.main_dish}“"
@@ -228,10 +224,15 @@ class LunchMenu(list):
 
         # Count lunches by status
         ordered_lunch, ordered_count = None, 0
+        can_be_changed = None
         for lunch in lunches:
-            if lunch.status == Lunch.Status.ORDERED:
+            if lunch.is_ordered:
                 ordered_count += 1
                 ordered_lunch = lunch
+            if can_be_changed is None:
+                can_be_changed = lunch.can_be_changed
+            elif can_be_changed != lunch.can_be_changed:
+                raise ValueError("The property 'can_be_changed' isn't the same for all Lunches in the LunchMenu.")
 
         # There can be only 1 lunch ordered each day
         if ordered_count > 1:
@@ -240,6 +241,7 @@ class LunchMenu(list):
         super().__init__(lunches)
         self.date: Date = first_date
         self.ordered_lunch: Lunch = ordered_lunch
+        self.can_be_changed = can_be_changed
 
         # Find and define shared variables
         # shared_dish: defined if all main_dishes ends with the same part
@@ -433,14 +435,15 @@ class User:
 
                 anchor = lunch_item.find_element(By.TAG_NAME, "a")
                 classes = anchor.get_attribute("class").split(" ")
-                if "ordered" in classes:
-                    status = Lunch.Status.ORDERED
-                elif "enabled" in classes:
-                    status = Lunch.Status.ENABLED
-                else:
-                    status = Lunch.Status.DISABLED
+                can_be_changed = "ordered" in classes or "enabled" in classes
+                is_ordered = False
+                try:
+                    if anchor.find_element(By.CSS_SELECTOR, ".button-link-tick"):
+                        is_ordered = True
+                except:
+                    pass
 
-                lunches.append(Lunch(date, lunch_number, soup, main_dish, status=status))
+                lunches.append(Lunch(date, lunch_number, soup, main_dish, can_be_changed, is_ordered))
             lunch_number += 1
 
         return None if len(lunches) == 0 else LunchMenu(lunches)

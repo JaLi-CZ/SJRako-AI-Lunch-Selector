@@ -3,15 +3,10 @@ Neural Network library written in Python
 """
 import os.path
 import random
-import time
 from abc import abstractmethod, ABC
 from typing import Optional, Iterable, Union
-from collections import Counter
-import math
 import numpy as np
 from numpy.typing import NDArray
-from gensim.models import KeyedVectors, FastText
-import gensim.downloader
 
 
 class ActivationFunction(ABC):
@@ -167,7 +162,7 @@ class NeuralNetwork:
         self.cost: float = -1
 
     # Returns an array of activations in the output Layer
-    def predict(self, inputs: Iterable[float]) -> np.ndarray:
+    def predict(self, inputs: Iterable[float]) -> NDArray[float]:
         is_input_layer = True
         for layer in self.layers:
             if is_input_layer:
@@ -218,10 +213,20 @@ class NeuralNetwork:
                 layer.biases -= biases_grad * learning_rate
                 idx += 1
 
-    def train(self, dataset: Iterable[tuple[NDArray[float], NDArray[float]]], epochs: int = 10, batch_size: int = -1,
-              learning_rate: float = 0.001, log_info: bool = True):
+    def train(
+        self,
+        dataset: Iterable[tuple[NDArray[float], NDArray[float]]],
+        epochs: int = 10,
+        batch_size: int = -1,
+        learning_rate: float = 0.001,
+        log_info: bool = True,
+        validation_split: float = 0.15
+    ):
         if not dataset:
             raise ValueError("Training dataset is empty.")
+
+        if not (0 <= validation_split < 1):
+            raise ValueError("Validation split must be between 0 and 1.")
 
         beta1 = 0.9  # Decay rate for the first moment estimate
         beta2 = 0.999  # Decay rate for the second moment estimate
@@ -240,19 +245,26 @@ class NeuralNetwork:
 
         # Convert dataset to a list for easy shuffling
         dataset = list(dataset)
+        random.shuffle(dataset)
+
+        # Split dataset into training and validation sets
+        split_index = len(dataset) if validation_split == 0 else int((1 - validation_split) * len(dataset))
+        training_data = dataset[:split_index]
+        validation_data = dataset[split_index:]
+
         if batch_size <= 0:
-            batch_size = len(dataset)
+            batch_size = len(training_data)
 
         min_cost = float('inf')
         epochs_since_improvement = 0
 
         for epoch in range(epochs):
-            random.shuffle(dataset)  # Shuffle dataset each epoch for better training
+            random.shuffle(training_data)  # Shuffle training data each epoch for better training
             cost_sum, count = 0, 0
 
             # Process each mini-batch
-            for batch_start in range(0, len(dataset), batch_size):
-                batch = dataset[batch_start:batch_start + batch_size]
+            for batch_start in range(0, len(training_data), batch_size):
+                batch = training_data[batch_start:batch_start + batch_size]
                 gradient_sum = None
 
                 for inputs, targets in batch:
@@ -301,8 +313,20 @@ class NeuralNetwork:
             cost_avg = round(cost_sum / count * 1e6) / 1e6
             self.cost = cost_avg
 
+            validation_cost_str = ""
+            if validation_split != 0:
+                # Evaluate on validation set
+                val_cost_sum, val_count = 0, 0
+                for inputs, targets in validation_data:
+                    self.predict(inputs)
+                    val_cost_sum += self.current_cost(targets)
+                    val_count += 1
+
+                val_cost_avg = round(val_cost_sum / val_count * 1e6) / 1e6
+                validation_cost_str = f"| Validation Cost: {val_cost_avg} "
+
             if log_info:
-                print(f"Epoch {epoch + 1}/{epochs} finished | Cost: {cost_avg} | Learning Rate: {learning_rate}")
+                print(f"Epoch {epoch + 1}/{epochs} finished | Training Cost: {cost_avg} {validation_cost_str}| Learning Rate: {learning_rate}")
 
     def save(self, filepath: str = defaultSavePath):
         layer_neuron_counts = []
@@ -441,66 +465,3 @@ class Neuron:
         if self.layer.previous_layer is None:
             raise Exception("Cannot change the activation of a Neuron in the input Layer.")
         self.layer.activations[self.index] = value
-
-
-dataset = []
-longest_lunch = -1
-for line in map(lambda line: line.strip(), filter(lambda line: line, open("lunch-data.csv", "r", encoding="utf-8").read().split("\n")[1:])):
-    lunch_name, taste, meatiness, sweetness, healthiness = line.split(",")
-    if len(lunch_name) > longest_lunch:
-        longest_lunch = len(lunch_name)
-    dataset.append((lunch_name, int(taste), int(meatiness), int(sweetness), int(healthiness)))
-
-
-lunch_names_joined = "".join([x[0] for x in dataset])
-_letters = tuple(sorted(Counter("".join(lunch_names_joined)).keys()))
-letters_count = len(_letters)
-letters: dict[str, int] = {}
-for i in range(letters_count):
-    letters[_letters[i]] = i
-
-
-training_data = []
-for lunch_name, taste, meatiness, sweetness, healthiness in dataset:
-    input_data = np.zeros(longest_lunch * letters_count)
-    i = 0
-    for c in lunch_name:
-        input_data[i * letters_count + letters[c]] = 1
-        i += 1
-    output_data = np.array([taste, meatiness, sweetness, healthiness])
-    training_data.append((input_data, output_data))
-
-model = NeuralNetwork.load()
-if model is None:
-    model = NeuralNetwork([longest_lunch * letters_count, 24, 4], activation_func=ReLU(), loss_func=MeanAbsoluteError())
-
-# model.train(training_data, 1000, 100, 0.0001, True)
-# model.save()
-print(f"Done training with Cost: {model.cost}")
-
-errors = []
-for lunch_name, taste, meatiness, sweetness, healthiness in dataset:
-    input_data = np.zeros(longest_lunch * letters_count)
-    i = 0
-    for c in lunch_name:
-        input_data[i * letters_count + letters[c]] = 1
-        i += 1
-    prediction = model.predict(input_data)
-    desired = np.array([taste, meatiness, sweetness, healthiness])
-    errors.append((lunch_name, desired - prediction))
-
-while True:
-    try:
-        lunch = input("Lunch name: ")
-        if lunch.startswith("train"):
-            epochs, batch_size, rate = lunch.split(" ")[1:]
-            model.train(training_data, int(epochs), int(batch_size), float(rate))
-        else:
-            inputs = np.zeros(longest_lunch * letters_count)
-            i = 0
-            for c in lunch:
-                inputs[i * letters_count + letters[c]] = 1
-                i += 1
-            print(model.predict(inputs))
-    except Exception as e:
-        print(e)
