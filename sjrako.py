@@ -143,7 +143,7 @@ class Date:
 
 # Represents a Lunch object
 class Lunch:
-    def __init__(self, date: Date, number: int, soup: str, main_dish: str, is_ordered: bool = False, canteen_website: bool = False):
+    def __init__(self, date: Date, number: int, soup: str, main_dish: str, is_ordered: bool = False):
         def format_dish(dish: str):
             if dish is None:
                 return None
@@ -608,7 +608,7 @@ class Canteen:
                 soup_and_dish = Lunch.get_soup_and_main_dish(lunch, sep=(";" if ";" in lunch else ","))
                 if soup_and_dish is not None:
                     soup, main_dish = soup_and_dish
-                    lunches.append(Lunch(date, lunch_number, soup, main_dish, canteen_website=True))
+                    lunches.append(Lunch(date, lunch_number, soup, main_dish))
                 lunch_number += 1
 
             if len(lunches) != 0:
@@ -689,6 +689,6 @@ def load_lunch_menus(filepath: str = DEFAULT_JSON_LUNCH_MENUS_FILEPATH) -> list[
         lunches = []
         for lunch_json in lunch_menu_json["lunches"]:
             lunch_number, soup, main_dish = lunch_json["lunchNumber"], lunch_json.get("soup"), lunch_json["mainDish"]
-            lunches.append(Lunch(date, lunch_number, soup if soup else shared_soup, main_dish, canteen_website=True))
+            lunches.append(Lunch(date, lunch_number, soup if soup else shared_soup, main_dish))
         lunch_menus.append(LunchMenu(lunches))
     return lunch_menus
