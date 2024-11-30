@@ -79,7 +79,7 @@ else:
 
     model.compile(optimizer='adam', loss='mean_absolute_error')
 
-    model.fit(lunch_input_vectors, desired_property_outputs, epochs=800, batch_size=50, validation_split=0.0)
+    model.fit(lunch_input_vectors, desired_property_outputs, epochs=800, batch_size=50, validation_split=0.1)
     model.save(model_path)
 
 
