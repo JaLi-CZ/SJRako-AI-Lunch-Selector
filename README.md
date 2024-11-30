@@ -52,13 +52,12 @@ class Date(year, month, day):
 
 ### Lunch class
 ```python
-class Lunch(date, number, soup, main_dish, can_be_changed=False, is_ordered=False):
+class Lunch(date, number, soup, main_dish, is_ordered):
 
     date: Date           # Stores the date of the lunch
     number: int          # Stores the lunch number (1, 2 or 3)
     soup: str            # Stores the name of the soup - e.g. "frankfurtská polévka"
     main_dish: str       # Stores the name of the main dish - e.g. "hovězí gulaš těstoviny vařené"
-    can_be_changed: bool # True if the lunch can still be changed/cancelled
     is_ordered: bool     # True if the lunch has been ordered (only available when loaded via the User class)
 ```
 
@@ -70,7 +69,6 @@ class LunchMenu(lunches: list[Lunch]):
 
     date: Date                      # The date for which the lunch menu is created
     ordered_lunch: Optional[Lunch]  # Stores the lunch that is ordered (if any; only available when loaded via the User class)
-    can_be_changed: bool            # True if the lunches in the menu can still be changed/cancelled
     shared_dish: Optional[str]      # Stores the shared ending of main dishes (if any)
     shared_soup: Optional[str]      # Stores the soup (if it's same for all lunches)
 

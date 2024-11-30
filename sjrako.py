@@ -159,7 +159,6 @@ class Lunch:
         self.number: int = number
         self.soup: str = format_dish(soup)
         self.main_dish: str = format_dish(main_dish)
-        self.can_be_changed: bool = False if canteen_website else date.is_lunch_changeable()
         self.is_ordered: bool = is_ordered
 
     def __str__(self):
@@ -229,15 +228,10 @@ class LunchMenu(list):
 
         # Count lunches by status
         ordered_lunch, ordered_count = None, 0
-        can_be_changed = None
         for lunch in lunches:
             if lunch.is_ordered:
                 ordered_count += 1
                 ordered_lunch = lunch
-            if can_be_changed is None:
-                can_be_changed = lunch.can_be_changed
-            elif can_be_changed != lunch.can_be_changed:
-                print("WARNING: The property 'can_be_changed' isn't the same for all Lunches in the LunchMenu.")
 
         # There can be only 1 lunch ordered each day
         if ordered_count > 1:
@@ -246,7 +240,6 @@ class LunchMenu(list):
         super().__init__(lunches)
         self.date: Date = first_date
         self.ordered_lunch: Optional[Lunch] = ordered_lunch
-        self.can_be_changed = can_be_changed
 
         # Find and define shared variables
         # shared_dish: defined if all main_dishes ends with the same part
